@@ -95,7 +95,7 @@ Prints the true label, prediction and confidence for each test image, then the o
 |---|---|
 | Scalar micrograd-style, 196 → 32 → 10 (14×14 downscaled), 8 epochs | ~95.1% |
 | Array version, 784 → 128 → 64 → 10, plain SGD | ~98.0% |
-| Plus shift augmentation, weight decay and label smoothing (current) | ~98.2% |
+| Addition of shift augmentation, weight decay and label smoothing (current) | ~98.2% |
 
 Runs differ by about 0.1–0.2 points because initial weights and augmentation are not seeded.
 
@@ -104,7 +104,6 @@ Runs differ by about 0.1–0.2 points because initial weights and augmentation a
 ## Notes
 
 - `predict.py` must build the same architecture used in training (`MLP(784, [128, 64, 10])`). Weights are loaded with `zip`, which stops at the shorter list, so a mismatched architecture can be misassigned silently.
-- `weights.json` from the earlier scalar version is not compatible with the current code. Retrain after pulling the changes.
 
 ## Acknowledgements
 
