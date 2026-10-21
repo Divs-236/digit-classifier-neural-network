@@ -1,33 +1,35 @@
-import sys;sys.setrecursionlimit(10000)
+import sys;sys.setrecursionlimit(10000)  #graph is built recursively, hence to accomodate for larger graphs
 import numpy as np
 
-"""
-Micrograd-inspired Neural network that forms the core of the project.
-"""
-
+#Function to reverse NumPy broadcasting
 def _unbrodcast(g, shape):
-    while g.ndim > len(shape):
+    while g.ndim > len(shape):  #removes extra dimension caused by boradcasting; by summing it
         g = g.sum(axis=0)
 
     for i, s in enumerate(shape):
-        if s == 1 and g.shape[i] != 1:
+        if s == 1 and g.shape[i] != 1:  #sums dimensions that got stretched by summing back to 1
             g = g.sum(axis=i, keepdims=True)
     return g
 
 class Value:
+
+    """A node in the computation graph: holds an array, its gradient, and how to backpropogate through the operation that made it."""
 
     __slots__ = ("data", "grad", "_backward", "_prev", "_op", "label")
 
     def __init__(self, data, _children=(), _op="", label=""):
         self.data = np.asarray(data, dtype=np.float32)
         self.grad = np.zeros_like(self.data)
-        self._backward = lambda: None
-        self._prev = set(_children) 
-        self._op = _op
-        self.label = label
+        self._backward = lambda: None  #leaf nodes do not propogate backwards
+        self._prev = set(_children)  #stores parent nodes
+        self._op = _op  #For debugging purposes
+        self.label = label  #for debugging purposes
 
     def __repr__(self):
         return f"Value(data={self.data})"
+
+
+    """Each operation below computes the forward result and stores the node's contribution to the input gradients"""
     
     def __add__(self,other):
         other = other if isinstance(other, Value) else Value(other)
@@ -103,11 +105,6 @@ class Value:
     def __rsub__(self, other):
         return (-self) + Value(other)
 
-
-    def dropout(self, p = 0, training=True):
-        if not training or p == 0:
-            return self
-
     def tanh(self):
         x = self.data
         t = np.tanh(x)  #(math.exp(2*n) - 1) / (math.exp(2*n) + 1)
@@ -123,12 +120,12 @@ class Value:
     def relu(self):
         out = Value(np.maximum(0.0, self.data), (self,), "relu")
         def _backward():
-            self.grad += (out.data > 0) * out.grad
+            self.grad += (out.data > 0) * out.grad  #gradient is accepted only if output is positive
         out._backward = _backward
         return out
 
     def log(self):
-        x = np.maximum(self.data, 1e-12)
+        x = np.maximum(self.data, 1e-12)  #lower bound to avoid log(0)
         out = Value(np.log(x), (self,), "log")
         def _backward():
             self.grad += (1.0 / x) * out.grad
@@ -138,7 +135,7 @@ class Value:
     def backward(self):
         topo = []
         visited = set()
-        def build_topo(v):
+        def build_topo(v):  #builds the graph to traverse the nodes on
             if v not in visited:
                 visited.add(v)
                 for child in v._prev:
@@ -151,18 +148,16 @@ class Value:
             node._backward()
     
 class Layer:
-    def __init__(self, nin, nout, nonlin=True, p=0.0):
+    def __init__(self, nin, nout, nonlin=True):
         s = (6 / nin) ** 0.5
         self.W = Value(np.random.uniform(-s, s, (nin, nout)))
         self.b = Value(np.zeros((1, nout)))
         self.nonlin = nonlin
-        self.p = p
-        self.training = True
 
     def __call__(self, x):
         act = x @ self.W + self.b
         if self.nonlin:
-            act = act.relu().dropout(self.p, self.training)
+            act = act.relu()
         return act
     
     def parameters(self):
@@ -171,7 +166,7 @@ class Layer:
 class MLP:
     def __init__(self, nin, nouts):
         sz = [nin] + nouts
-        self.layers = [Layer(sz[i], sz[i+1], nonlin=(i != len(nouts) - 1), p=0.0) for i in range(len(nouts))]
+        self.layers = [Layer(sz[i], sz[i+1], nonlin=(i != len(nouts) - 1)) for i in range(len(nouts))]
 
     def __call__(self, x):
         if not isinstance(x, Value):
@@ -181,14 +176,10 @@ class MLP:
             x = layer(x)
 
         return x
-
-    def train_mode(self, flag):
-        for layer in self.layers:
-            layer.training = flag
-    
+     
     def parameters(self):
         return [p for layer in self.layers for p in layer.parameters()]
 
     def zero_grad(self):
-        for p in self.parameters():
+        for p in self.parameters():  #reset gradients before another backward pass
             p.grad = np.zeros_like(p.data)
