@@ -1,15 +1,26 @@
-import random
 import sys;sys.setrecursionlimit(10000)
-import math
+import numpy as np
 
+"""
+Micrograd-inspired Neural network that forms the core of the project.
+"""
+
+def _unbrodcast(g, shape):
+    while g.ndim > len(shape):
+        g = g.sum(axis=0)
+
+    for i, s in enumerate(shape):
+        if s == 1 and g.shape[i] != 1:
+            g = g.sum(axis=i, keepdims=True)
+    return g
 
 class Value:
 
-    __slots__ = ("data","grad","_backward","_prev","_op","label")
+    __slots__ = ("data", "grad", "_backward", "_prev", "_op", "label")
 
     def __init__(self, data, _children=(), _op="", label=""):
-        self.data = data
-        self.grad = 0.0
+        self.data = np.asarray(data, dtype=np.float32)
+        self.grad = np.zeros_like(self.data)
         self._backward = lambda: None
         self._prev = set(_children) 
         self._op = _op
@@ -22,8 +33,8 @@ class Value:
         other = other if isinstance(other, Value) else Value(other)
         out = Value(self.data + other.data, (self,other), "+")
         def _backward():
-            self.grad += 1.0 * out.grad
-            other.grad += 1.0 * out.grad
+            self.grad += _unbrodcast(out.grad, self.data.shape)
+            other.grad += _unbrodcast(out.grad, other.data.shape)
         out._backward = _backward
         return out
     
@@ -34,17 +45,37 @@ class Value:
         other = other if isinstance(other, Value) else Value(other)
         out =  Value(self.data * other.data, (self,other), "*")
         def _backward():
-            self.grad += other.data * out.grad
-            other.grad += self.data * out.grad
+            self.grad += _unbrodcast(other.data * out.grad, self.data.shape)
+            other.grad += _unbrodcast(self.data * out.grad, other.data.shape)
         out._backward = _backward
         return out
     
     def __rmul__(self, other):
         return self * other
+
+    def __matmul__(self, other):
+        out = Value(self.data @ other.data, (self, other), "@")
+        def _backward():
+            self.grad += out.grad @ other.data.T
+            other.grad += self.data.T @ out.grad
+
+        out._backward = _backward
+        return out
+
+
+    def sum(self, axis=None, keepdims=False):
+        out = Value(self.data.sum(axis = axis, keepdims=keepdims), (self,), "sum")
+        def _backward():
+            g = out.grad
+            if axis is not None and not keepdims:
+                g = np.expand_dims(g, axis)
+            self.grad += g
+        out._backward = _backward
+        return out
     
     def exp(self):
         x = self.data
-        out = Value(math.exp(x), (self, ), "exp")
+        out = Value(np.exp(x), (self, ), "exp")
 
         def _backward():
             self.grad += out.data * out.grad
@@ -71,10 +102,15 @@ class Value:
     
     def __rsub__(self, other):
         return (-self) + Value(other)
-    
+
+
+    def dropout(self, p = 0, training=True):
+        if not training or p == 0:
+            return self
+
     def tanh(self):
         x = self.data
-        t = math.tanh(x)#(math.exp(2*n) - 1) / (math.exp(2*n) + 1)
+        t = np.tanh(x)  #(math.exp(2*n) - 1) / (math.exp(2*n) + 1)
 
         out = Value(t, (self, ), 'tanh' ) 
 
@@ -85,15 +121,15 @@ class Value:
         return out
 
     def relu(self):
-        out = Value(max(0.0, self.data), (self,), "relu")
+        out = Value(np.maximum(0.0, self.data), (self,), "relu")
         def _backward():
             self.grad += (out.data > 0) * out.grad
         out._backward = _backward
         return out
 
     def log(self):
-        x = max(self.data, 1e-12)
-        out = Value(math.log(x), (self,), "log")
+        x = np.maximum(self.data, 1e-12)
+        out = Value(np.log(x), (self,), "log")
         def _backward():
             self.grad += (1.0 / x) * out.grad
         out._backward = _backward
@@ -110,81 +146,49 @@ class Value:
                 topo.append(v)
         build_topo(self)
 
-        self.grad = 1.0
+        self.grad = np.ones_like(self.data)
         for node in reversed(topo):
             node._backward()
-
-def dot_const(ws, xs, b):
-
-    out = Value(sum([w.data * x for w, x in zip(ws, xs)]) + b.data, tuple(ws) + (b,), "dot")
-
-    def _backward():
-        g = out.grad
-        for w, x in zip(ws, xs):
-            w.grad += x * g
-
-        b.grad += g
-    out._backward = _backward
-    return out
-
-
-def dot_value(ws, xs, b):
-    out = Value(sum([w.data * x.data for w, x in zip(ws, xs)]) + b.data, tuple(ws) + tuple(xs) + (b,), "dot")
-
-    def _backward():
-        g = out.grad
-        for w, x in zip(ws, xs):
-            w.grad += x.data * g
-            x.grad += w.data * g
-
-        b.grad += g
-    out._backward = _backward
-    return out
-
-
-
-class Neuron:
-    def __init__(self, nin, nonlin=True):
-        s = nin ** -0.5
-        self.w = [Value(random.uniform(-1,1)) for _ in range(nin)]
-        self.b = Value(random.uniform(-1,1))
-        self.nonlin = nonlin
-
-    def __call__(self, x):
-
-        if isinstance(x[0], Value):
-            act = dot_value(self.w, x, self.b)
-        else:
-            act = dot_const(self.w, x, self.b)
-
-        return act.relu() if self.nonlin else act
-    
-    def parameters(self):
-        return self.w + [self.b]
     
 class Layer:
-    def __init__(self, nin, nout, nonlin=True):
-        self.neurons = [Neuron(nin, nonlin) for _ in range(nout)]
+    def __init__(self, nin, nout, nonlin=True, p=0.0):
+        s = (6 / nin) ** 0.5
+        self.W = Value(np.random.uniform(-s, s, (nin, nout)))
+        self.b = Value(np.zeros((1, nout)))
+        self.nonlin = nonlin
+        self.p = p
+        self.training = True
 
     def __call__(self, x):
-        return [n(x) for n in self.neurons]
+        act = x @ self.W + self.b
+        if self.nonlin:
+            act = act.relu().dropout(self.p, self.training)
+        return act
     
     def parameters(self):
-        return [p for neuron in self.neurons for p in neuron.parameters()]
+        return [self.W, self.b]
 
 class MLP:
     def __init__(self, nin, nouts):
         sz = [nin] + nouts
-        self.layers = [Layer(sz[i], sz[i+1], nonlin=(i != len(nouts) - 1)) for i in range(len(nouts))]
+        self.layers = [Layer(sz[i], sz[i+1], nonlin=(i != len(nouts) - 1), p=0.0) for i in range(len(nouts))]
 
     def __call__(self, x):
+        if not isinstance(x, Value):
+            x = Value(x)
+
         for layer in self.layers:
             x = layer(x)
+
         return x
+
+    def train_mode(self, flag):
+        for layer in self.layers:
+            layer.training = flag
     
     def parameters(self):
         return [p for layer in self.layers for p in layer.parameters()]
 
     def zero_grad(self):
         for p in self.parameters():
-            p.grad = 0.0
+            p.grad = np.zeros_like(p.data)

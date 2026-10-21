@@ -3,38 +3,27 @@ import numpy as np
 from nn import MLP
 from data import load
 
-model = MLP(196, [32, 10])
+model = MLP(784, [128, 64, 10])
+model.train_mode(False)
 
 for p, w in zip(model.parameters(), json.load(open("weights.json"))):
-    p.data = w
+    p.data = np.array(w, dtype=np.float32)
 
 def predict(x):
-    logits = model(x)
-    vals = [l.data for l in logits]
+    logits = model(x).data
+    z = logits - logits.max(axis=1, keepdims=True)
+    e = np.exp(z)
 
-    m = max(vals)
-
-    exps = [np.exp(v - m) for v in vals]
-    probs = [e / sum(exps) for e in exps]
-
-    return int(np.argmax(probs)), probs
+    probs = e / e.sum(axis=1, keepdims=True)
+    return probs.argmax(axis=1), probs
 
 if __name__ == "__main__":
-    _, _, Xte, yte = load(num_train=20, num_test=5000)
+    _, _, Xte, yte = load(num_train=20, num_test=10000)
 
-    correct = 0
-    incorrect = 0
+    preds, probs = predict(Xte)
 
-    for x, y in zip(Xte, yte):
-        pred, probs = predict(x)
-
-        if pred == y:
-            correct += 1
-        else:
-            incorrect += 1
-
-        
-        print(f"true {y} predicted {pred} confidence {probs[pred]:.2f}")
+    for y, p, pr in zip(yte, preds, probs):
+        print(f"true {y} predicted {p} confidence {pr[p]:.2f}")
 
     print()
-    print("Accuracy: ",correct / (correct + incorrect))
+    print("Accuracy:", (preds == yte).mean())

@@ -43,7 +43,7 @@ def _read(folder):
     return _read_idx(folder)
 
 
-def load(num_train=2000, num_test=500, pool=True, seed=0, root="."):
+def load(num_train=2000, num_test=500, pool=False, seed=0, root="."):
     rng = np.random.default_rng(seed)
 
     def prep(split, n):
@@ -51,11 +51,12 @@ def load(num_train=2000, num_test=500, pool=True, seed=0, root="."):
         idx = rng.permutation(len(X))[:n]
 
         X = X[idx].astype(np.float32) / 255.0
+        X = (X - 0.1307) / 0.3081
         y = y[idx]
 
         if pool:
             X = X.reshape(-1, 14, 2, 14, 2).mean(axis=(2,4))
-        return X.reshape(len(X), -1).tolist(), y.tolist()
+        return X.reshape(len(X), -1), y.astype(np.int64)
 
     Xtr, ytr = prep("train", num_train)
     Xte, yte = prep("test", num_test)
