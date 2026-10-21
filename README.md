@@ -6,25 +6,24 @@ A handwritten-digit classifier built on a small autograd engine written from scr
 
 ## Dataset
 
-[MNIST](https://github.com/sunsided/mnist) (original page: [yann.lecun.com/exdb/mnist](http://yann.lecun.com/exdb/mnist/)): 70,000 grayscale 28×28 images of handwritten digits, split into 60,000 training and 10,000 test images. It was assembled by Yann LeCun, Corinna Cortes and Christopher Burges. The dataset is not included in this repo.
+[MNIST](https://github.com/sunsided/mnist) (a subset of the [NIST dataset](http://yann.lecun.com/exdb/mnist/)): 70,000 grayscale, 28×28 images of handwritten digits, split into 60,000 training and 10,000 test images. Dataset not included in the repo.
 
 ## How it works
 
-- Every number in the network lives in a `Value` object that remembers which `Value`s it was computed from and how to pass gradients back to them.
+- Every number in the neural network lives in a `Value` object that remembers which `Value`s it was computed from and how to pass gradients back to them.
 - A forward pass builds a graph of these objects. Calling `loss.backward()` walks the graph in reverse and applies the chain rule to get the gradient of every weight (backpropagation).
 - A mini-batch gradient-descent loop nudges each weight against its gradient to lower the loss.
 - **What differs from micrograd:** each `Value` holds a NumPy array instead of one scalar. A batch of 64 images then produces about 30 graph nodes instead of millions, and each node's math runs in compiled NumPy code. The design is the same, only much faster.
 
 ```
-MNIST files → data.py load() → train.py loop (augment → forward → loss → backward → update)
-            → weights.json → predict.py → test accuracy
+MNIST files → data.py load() → train.py loop → weights.json → predict.py → test accuracy
 ```
 
 ## Project layout
 
 ```
 ML_digits/
-├── train/          # MNIST training images + labels (IDX files, .gz or unzipped)
+├── train/          # MNIST training images + labels (IDX files)
 ├── test/           # MNIST test images + labels
 ├── nn.py           # Autograd Engine, Layer, MLP
 ├── data.py         # Loads MNIST, subsamples, standardises, flattens
@@ -43,7 +42,7 @@ venv\Scripts\activate          # Windows
 pip install numpy              # add Pillow only if you load PNG folders instead of IDX files
 ```
 
-Download MNIST and place the files like this, unzipped or `.gz`:
+Download MNIST and place the files as shown
 
 ```
 train/   ...images...ubyte   ...labels...ubyte
@@ -94,7 +93,7 @@ Prints the true label, prediction and confidence for each test image, then the o
 
 | Run | Test accuracy |
 |---|---|
-| Scalar micrograd-style, 196 → 32 → 10 (14×14 pooled), 8 epochs | ~95.1% |
+| Scalar micrograd-style, 196 → 32 → 10 (14×14 downscaled), 8 epochs | ~95.1% |
 | Array version, 784 → 128 → 64 → 10, plain SGD | ~98.0% |
 | Plus shift augmentation, weight decay and label smoothing (current) | ~98.2% |
 
@@ -106,7 +105,6 @@ Runs differ by about 0.1–0.2 points because initial weights and augmentation a
 
 - `predict.py` must build the same architecture used in training (`MLP(784, [128, 64, 10])`). Weights are loaded with `zip`, which stops at the shorter list, so a mismatched architecture can be misassigned silently.
 - `weights.json` from the earlier scalar version is not compatible with the current code. Retrain after pulling the changes.
-- If you turn dropout on, call `model.train_mode(False)` before measuring accuracy.
 
 ## Acknowledgements
 
